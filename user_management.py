@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from db import get_db_conn
+import traceback # Added for traceback.print_exc()
 
 # 角色权限定义
 ROLES = {
@@ -100,42 +101,36 @@ class UserManager:
     def authenticate_user(self, username, password):
         """用户认证"""
         try:
+            print(f"尝试认证用户: {username}")  # 调试信息
             conn = get_db_conn()
             with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT id, username, role, is_active 
+                query = """
+                    SELECT id, username, role, email 
                     FROM users 
-                    WHERE username = %s AND password = %s AND is_active = TRUE
-                """, (username, password))
+                    WHERE username = %s AND password = %s
+                    AND (is_active IS NULL OR is_active = TRUE)
+                """
+                print(f"执行SQL查询: {query}")  # 调试信息
+                cursor.execute(query, (username, password))
                 user = cursor.fetchone()
+                print(f"查询结果: {user}")  # 调试信息
                 
                 if user:
-                    # 更新最后登录时间
-                    cursor.execute("""
-                        UPDATE users SET last_login = CURRENT_TIMESTAMP 
-                        WHERE id = %s
-                    """, (user[0],))
-                    conn.commit()
-                    
                     self.current_user = {
                         'id': user[0],
                         'username': user[1],
-                        'role': user[2]
+                        'role': user[2],
+                        'email': user[3]
                     }
+                    print(f"认证成功，用户信息: {self.current_user}")  # 调试信息
                     conn.close()
                     return True
             conn.close()
+            print("认证失败：未找到匹配的用户记录")  # 调试信息
             return False
         except Exception as e:
             print(f"用户认证错误: {e}")
-            # 如果数据库连接失败，使用简单的内存认证
-            if username == 'admin' and password == 'admin123':
-                self.current_user = {
-                    'id': 1,
-                    'username': 'admin',
-                    'role': 'admin'
-                }
-                return True
+            traceback.print_exc()  # 打印详细错误信息
             return False
     
     def has_permission(self, permission):
@@ -192,9 +187,9 @@ class UserManagementDialog(QDialog):
         
         # 用户列表
         self.user_table = QTableWidget()
-        self.user_table.setColumnCount(6)
+        self.user_table.setColumnCount(5)
         self.user_table.setHorizontalHeaderLabels([
-            "ID", "用户名", "角色", "邮箱", "最后登录", "状态"
+            "ID", "用户名", "角色", "邮箱", "状态"
         ])
         user_layout.addWidget(self.user_table)
         
@@ -326,7 +321,7 @@ class UserManagementDialog(QDialog):
             conn = get_db_conn()
             with conn.cursor() as cursor:
                 cursor.execute("""
-                    SELECT id, username, role, email, last_login, is_active
+                    SELECT id, username, role, email, is_active
                     FROM users ORDER BY id
                 """)
                 users = cursor.fetchall()
@@ -337,8 +332,7 @@ class UserManagementDialog(QDialog):
                 self.user_table.setItem(row, 1, QTableWidgetItem(user[1]))
                 self.user_table.setItem(row, 2, QTableWidgetItem(ROLES.get(user[2], {}).get('name', user[2])))
                 self.user_table.setItem(row, 3, QTableWidgetItem(user[3] or ''))
-                self.user_table.setItem(row, 4, QTableWidgetItem(str(user[4]) if user[4] else ''))
-                self.user_table.setItem(row, 5, QTableWidgetItem('启用' if user[5] else '禁用'))
+                self.user_table.setItem(row, 4, QTableWidgetItem('启用' if user[4] else '禁用'))
             
             conn.close()
         except Exception as e:
@@ -350,8 +344,7 @@ class UserManagementDialog(QDialog):
             self.user_table.setItem(0, 1, QTableWidgetItem("admin"))
             self.user_table.setItem(0, 2, QTableWidgetItem("管理员"))
             self.user_table.setItem(0, 3, QTableWidgetItem("admin@recyclemind.com"))
-            self.user_table.setItem(0, 4, QTableWidgetItem(""))
-            self.user_table.setItem(0, 5, QTableWidgetItem("启用"))
+            self.user_table.setItem(0, 4, QTableWidgetItem("启用"))
     
     def load_logs(self):
         """加载操作日志"""
