@@ -1,8 +1,10 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QMessageBox, QLabel, QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
-    QTabWidget, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QGroupBox, QGridLayout
+    QTabWidget, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit, QGroupBox, QGridLayout,
+    QMenuBar, QMenu
 )
+from PyQt6.QtGui import QAction
 from PyQt6.QtCore import Qt
 from db import get_db_conn
 import numpy as np
@@ -206,8 +208,9 @@ class OptimizationResultDialog(QDialog):
         layout.addWidget(close_btn)
 
 class WasteManager(QMainWindow):
-    def __init__(self):
+    def __init__(self, user_manager=None):
         super().__init__()
+        self.user_manager = user_manager
         self.setWindowTitle("废料管理系统")
         self.resize(1200, 700)
         self.waste_data = []
@@ -248,6 +251,9 @@ class WasteManager(QMainWindow):
                 conn.close()
 
     def init_ui(self):
+        # 创建菜单栏
+        self.create_menu_bar()
+        
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
@@ -355,6 +361,99 @@ class WasteManager(QMainWindow):
         
         self.tab_widget.addTab(optimization_widget, "合成方案")
 
+    def create_menu_bar(self):
+        """创建菜单栏"""
+        menubar = self.menuBar()
+        
+        # 系统菜单
+        system_menu = menubar.addMenu("系统")
+        
+        # 用户管理
+        if self.user_manager and self.user_manager.has_permission('user_manage'):
+            user_manage_action = QAction("用户管理", self)
+            user_manage_action.triggered.connect(self.open_user_management)
+            system_menu.addAction(user_manage_action)
+        elif not self.user_manager:
+            # 如果没有用户管理器，显示简化菜单
+            user_manage_action = QAction("用户管理", self)
+            user_manage_action.triggered.connect(self.show_simple_message)
+            system_menu.addAction(user_manage_action)
+        
+        # 数据备份
+        if self.user_manager and self.user_manager.has_permission('backup'):
+            backup_action = QAction("数据备份", self)
+            backup_action.triggered.connect(self.open_backup_management)
+            system_menu.addAction(backup_action)
+        elif not self.user_manager:
+            # 如果没有用户管理器，显示简化菜单
+            backup_action = QAction("数据备份", self)
+            backup_action.triggered.connect(self.show_simple_message)
+            system_menu.addAction(backup_action)
+        
+        system_menu.addSeparator()
+        
+        # 退出
+        exit_action = QAction("退出", self)
+        exit_action.triggered.connect(self.close)
+        system_menu.addAction(exit_action)
+        
+        # 帮助菜单
+        help_menu = menubar.addMenu("帮助")
+        
+        about_action = QAction("关于", self)
+        about_action.triggered.connect(self.show_about)
+        help_menu.addAction(about_action)
+
+    def open_user_management(self):
+        """打开用户管理对话框"""
+        if self.user_manager and self.user_manager.has_permission('user_manage'):
+            try:
+                from user_management import UserManagementDialog
+                dialog = UserManagementDialog(self.user_manager, self)
+                dialog.exec()
+            except Exception as e:
+                print(f"打开用户管理对话框错误: {e}")
+                QMessageBox.warning(self, "错误", f"打开用户管理失败：{str(e)}")
+        elif not self.user_manager:
+            # 使用简化版本
+            try:
+                from simple_user_management import SimpleUserManagementDialog
+                dialog = SimpleUserManagementDialog(self)
+                dialog.exec()
+            except Exception as e:
+                print(f"打开简化用户管理对话框错误: {e}")
+                QMessageBox.warning(self, "错误", f"打开用户管理失败：{str(e)}")
+        else:
+            QMessageBox.warning(self, "权限不足", "您没有用户管理权限！")
+
+    def open_backup_management(self):
+        """打开备份管理对话框"""
+        if self.user_manager and self.user_manager.has_permission('backup'):
+            from user_management import UserManagementDialog
+            dialog = UserManagementDialog(self.user_manager, self)
+            dialog.tab_widget.setCurrentIndex(2)  # 切换到备份标签页
+            dialog.exec()
+        else:
+            QMessageBox.warning(self, "权限不足", "您没有备份管理权限！")
+
+    def show_simple_message(self):
+        """显示简化消息"""
+        QMessageBox.information(self, "功能提示", 
+                               "此功能需要完整的用户管理系统支持。\n"
+                               "请使用完整版本的程序。")
+
+    def show_about(self):
+        """显示关于对话框"""
+        QMessageBox.about(self, "关于", 
+                         "废料管理系统 v2.0\n\n"
+                         "功能特性：\n"
+                         "• 废料库存管理\n"
+                         "• 产品标准管理\n"
+                         "• 智能合成方案计算\n"
+                         "• 用户权限管理\n"
+                         "• 操作日志记录\n"
+                         "• 数据备份恢复")
+
     def refresh_waste_table(self):
         self.waste_table.setRowCount(len(self.waste_data))
         for row, data in enumerate(self.waste_data):
@@ -406,6 +505,10 @@ class WasteManager(QMainWindow):
         pass
 
     def add_waste(self):
+        if self.user_manager and not self.user_manager.has_permission('waste_manage'):
+            QMessageBox.warning(self, "权限不足", "您没有废料管理权限！")
+            return
+            
         dlg = WasteDialog(self)
         if dlg.exec():
             data = dlg.get_data()
@@ -417,6 +520,13 @@ class WasteManager(QMainWindow):
                     cursor.execute(sql, data)
                     conn.commit()
                 self.load_waste_data()
+                
+                # 记录操作日志
+                if self.user_manager:
+                    self.user_manager.log_operation("添加废料", f"添加废料: {data[0]}")
+                else:
+                    print(f"添加废料: {data[0]}")
+                    
             except Exception as e:
                 QMessageBox.critical(self, "数据库错误", str(e))
             finally:
